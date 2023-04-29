@@ -2,6 +2,7 @@ import math
 from typing import List, Tuple
 import random
 import bisect
+import copy
 
 fout = open('Evolutie.txt', 'w')
 
@@ -11,13 +12,13 @@ COEF2, COEF1, COEF0 = -1, 1, 2
 PRECISION = 6
 CROSSOVER_PROB = 25 / 100
 MUTATION_PROB = 1 / 100
-STEPS = 50
+STEPS = 100
 
 
 class Individual:
-    def __init__(self, genome: str, fitness: float = 0) -> None:
-        self.genome = genome
-        self.fitness = fitness
+    def __init__(self, genome: List[int], fitness: float = 0) -> None:
+        self.genome: List[int] = genome
+        self.fitness: float = fitness
 
 
 class GenomeGenerator:
@@ -43,11 +44,12 @@ class GenomeGenerator:
         self.steps = steps
         self.crossOverProb = crossOverProb
         self.mutationProb = mutationProb
+        self.elite = None
         
         fout.write("Populatia initiala\n")
         for (i, x) in enumerate(self.population):
             res = str(i).zfill(len(str(len(self.population)))) + ": "
-            res += x.genome + " "
+            res += "".join([str(y) for y in x.genome]) + " "
             
             floatVal = self.fromGenome(x.genome)
             res += "x= "
@@ -70,65 +72,52 @@ class GenomeGenerator:
 
     def toGenome(self, x: float) -> str:
         normalized = math.floor((x - self.left) / self.discreteStep)
-        return bin(normalized)[2:].zfill(self.genomeSize)
+        return [int(x) for x in bin(normalized)[2:].zfill(self.genomeSize)]
 
     def fromGenome(self, x: str) -> float:
-        decimal = int(x, 2)
+        decimal = int("".join([str(y) for y in x]), 2)
         return self.left + decimal * self.discreteStep
 
     def selection(self, isFirst = True) -> List[Individual]:
         
         newPopulation = []
+    
+        n = len(self.population)
+        intervals = [0] * (n + 1)
+        suma = sum([x.fitness for x in self.population])
 
-        fitnessValues = [x.fitness for x in self.population]
-        sumFitness = sum(fitnessValues)
+        for i in range(1, n):
+            intervals[i] = intervals[i - 1] + self.population[i - 1].fitness
 
-        # pi = f(Xi) / sum(f(Xj))
-        probs: List[Tuple[int, float]] = [
-            (x.fitness / sumFitness, i) for (i, x) in enumerate(self.population)
-        ]
-        
-        if isFirst:
-            fout.write("Probabilitati selectie\n")
+        intervals[n] = suma
+
+        for i in range(1, n + 1):
+            intervals[i] /= suma
             
-            for (val, i) in probs:
-                res = "cromozom   "
-                res += str(i).zfill(len(str(len(self.population)))) + " "
-                res += "probabilitate "
-                res += str(val)
-                
-                fout.write(res + "\n")
-            fout.write("\n")
+        self.elite = 0
+        maxFitness = 0
+        for i in range(len(self.population)):
+            if self.population[i].fitness > maxFitness:
+                maxFitness = self.population[i].fitness
+                self.elite = i
             
-        probs.sort()
-        
-
-        elite = self.population[probs[-1][1]]
         # always keep elite
-        newPopulation.append(elite)
-
-        probs.insert(0, (0, -1))
-
-        # sum of probabilities qi
-        for i in range(1, len(probs)):
-            probs[i] = (probs[i - 1][0] + probs[i][0], probs[i][1])
-
-        probs.append((1, -1))
+        newPopulation.append(copy.deepcopy(self.population[self.elite]))
         
-        if isFirst:
-            fout.write("Intervale probabilitati selectie\n")
+        # if isFirst:
+        #     fout.write("Intervale probabilitati selectie\n")
             
-            for i in range(len(probs)):
-                res = str(probs[i][0]) + " "
-                if i > 0 and i % 4 == 0:
-                    res += '\n'
-                fout.write(res)
-            fout.write('\n')
+        #     for i in range(len(probs)):
+        #         res = str(probs[i][0]) + " "
+        #         if i > 0 and i % 4 == 0:
+        #             res += '\n'
+        #         fout.write(res)
+        #     fout.write('\n')
         
         for _ in range(1, len(self.population)):
             u = random.uniform(0, 1)
-            idx = bisect.bisect_right(probs, u, key=lambda x: x[0]) + 1
-            newPopulation.append(self.population[probs[idx][1]])
+            idx = bisect.bisect_right(intervals, u) - 1
+            newPopulation.append(copy.deepcopy(self.population[idx]))
 
         self.population = newPopulation
         return newPopulation
@@ -141,7 +130,6 @@ class GenomeGenerator:
             if u < self.crossOverProb:
                 parents.append(i)
 
-        maxF = max([x.fitness for x in self.population])
         l, r = 0, len(parents) - 1
 
         while l < r:
@@ -152,11 +140,8 @@ class GenomeGenerator:
             g1 = p1.genome[:crossPoint] + p2.genome[crossPoint:]
             g2 = p2.genome[:crossPoint] + p1.genome[crossPoint:]
 
-            # always keep elite
-            if p1.fitness != maxF:
-                p1.genome = g1
-            if p2.fitness != maxF:
-                p2.genome = g2
+            p1.genome = copy.deepcopy(g1)
+            p2.genome = copy.deepcopy(g2)
 
             l, r = l + 1, r - 1
 
@@ -164,17 +149,12 @@ class GenomeGenerator:
 
     def mutation(self, isFirst = True) -> List[Individual]:
         
-        maxF = max([x.fitness for x in self.population])
-        for x in self.population:
+        for (i, x) in enumerate(self.population):
             u = random.uniform(0, 1)
 
-            # always keep elite
-            if u < self.mutationProb and x.fitness != maxF:
+            if u < self.mutationProb:
                 mutationPoint = random.randint(0, self.genomeSize - 1)
-                flipped = "1" if x.genome[mutationPoint] == "0" else "0"
-                x.genome = (
-                    x.genome[:mutationPoint] + flipped + x.genome[mutationPoint + 1 :]
-                )
+                x.genome[mutationPoint] = 1 - x.genome[mutationPoint]
 
         return self.population
 
@@ -185,6 +165,7 @@ class GenomeGenerator:
         self.mutation()
         
         for step in range(1, self.steps):
+            self.elite = None
             for idx, individual in enumerate(self.population):
                 individual.fitness = self.fitnessFunction(
                     self.fromGenome(individual.genome)
